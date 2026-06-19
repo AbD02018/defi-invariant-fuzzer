@@ -1,19 +1,46 @@
+<div align="center">
+
 # 🧪 defi-invariant-fuzzer
 
-> **Foundry-based property-testing framework for DeFi protocol invariants.**
+### *Foundry-based property-testing framework for DeFi protocol invariants.*
 
-Catch billion-dollar bugs before deployment by writing invariants that must NEVER break — and then letting the fuzzer try to break them.
+[![Foundry](https://img.shields.io/badge/Foundry-required-000000?style=flat-square)](https://book.getfoundry.sh/)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.x-363636?style=flat-square&logo=solidity&logoColor=white)](https://soliditylang.org/)
+[![Templates](https://img.shields.io/badge/protocol%20templates-11-blueviolet?style=flat-square)](#-available-templates)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+
+</div>
+
+---
+
+## 🎯 Why
+
+> *"What property must NEVER break?"*
+
+That's the only question that matters when you're auditing a DeFi protocol. **defi-invariant-fuzzer** turns the answer to that question into a Foundry invariant test — and lets the fuzzer try to break it.
+
+This is the same workflow I use to find real bugs on forked mainnet:
+1. Identify the protocol's critical invariants (token conservation, solvency, liquidation bounds, etc.)
+2. Encode them as Foundry invariant handlers
+3. Generate random call sequences (deposit → borrow → liquidate → …)
+4. Fuzz until the invariant breaks — or until you have confidence it can't
+
+When the fuzzer finds a counterexample, you get:
+- 🔍 **The call sequence** that broke the invariant
+- 📊 **State diff** at the point of failure
+- 🧬 **A reproducible Foundry test** that re-runs the same sequence
+- 📝 **A candidate bug report** with measurable impact
 
 ---
 
 ## ✨ Features
 
-- 🎯 **Protocol-specific invariant templates** — ERC20 conservation, lending solvency, AMM constant-product, liquidation bounds
+- 🎯 **11 protocol-specific invariant templates** — see [Available Templates](#-available-templates)
 - 🚀 **Foundry-invariant native** — Built on top of `forge invariant`, no new DSL to learn
 - 🔍 **Automatic call sequence generation** — Multi-step state transitions (deposit → borrow → liquidate)
 - 📊 **Failure analysis** — Renders counterexamples in human-readable form with state diff
-- 🐳 **Docker-ready** — One-liner for CI/CD
-- 📚 **11 templates** for common DeFi protocol types
+- 🐳 **Docker-ready** — One-liner for CI/CD pipelines
+- 🔌 **Composable** — Mix and match templates per protocol
 
 ---
 
@@ -24,122 +51,133 @@ forge install AbD02018/defi-invariant-fuzzer --no-commit
 cp -r lib/defi-invariant-fuzzer/templates/* test/invariants/
 ```
 
+### From source (for development)
+
+```bash
+git clone https://github.com/AbD02018/defi-invariant-fuzzer
+cd defi-invariant-fuzzer
+forge install
+forge test
+```
+
 ### Requirements
 
-- Foundry (`forge`, `cast`, `anvil`)
+- Foundry (`forge`, `cast`, `anvil`) — see [installation guide](https://book.getfoundry.sh/getting-started/installation)
 - Solidity 0.8.x
+- Python 3.10+ (optional, for the report generator)
 
 ---
 
-## 🚀 Usage
-
-### Initialize a new invariant suite
-
-```bash
-forge invariant-init --target MyLending --suite LendingInvariants
-```
-
-This generates `test/invariants/LendingInvariants.sol` with pre-configured handlers for common lending protocol invariants.
-
-### Run invariants
-
-```bash
-forge invariant --match-contract LendingInvariants --depth 50
-```
-
-### Available templates
-
-| Template | Use For |
-|---|---|
-| `ERC20Conservation` | Token mint/burn balance checks |
-| `LendingSolvency` | Collateral >= Debt at all times |
-| `LendingLiquidation` | Liquidation maintains protocol solvency |
-| `AMMConstantProduct` | `x * y = k` for AMM pools |
-| `StakingRewards` | Rewards owed <= Rewards balance |
-| `VaultShareConservation` | Sum of shares == totalSupply |
-| `OracleNoStaleness` | Prices updated within N seconds |
-| `BridgeMessageUniqueness` | No double-spend in cross-chain bridges |
-| `GovernanceQuorum` | Vote counts don't exceed total supply |
-| `OrderbookConservation` | Bid+Ask fills cancel out correctly |
-| `LendingAccountHealth` | Health factor monotonicity |
-
----
-
-## 📖 Example
+## 🚀 Quick Start
 
 ```solidity
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
-import "defi-invariant-fuzzer/templates/LendingSolvency.sol";
-import "../src/MyLending.sol";
+import "defi-invariant-fuzzer/templates/ERC20/Conservation.sol";
+import "defi-invariant-fuzzer/templates/Lending/Solvency.sol";
 
-contract MyLendingInvariants is LendingSolvency {
-    MyLending internal lending;
-    
-    function setUp() public {
-        lending = new MyLending();
-        _registerTarget(address(lending));
+contract MyProtocolInvariants is ConservationInvariant, SolvencyInvariant {
+    MyToken token;
+    MyLendingMarket market;
+
+    constructor(MyToken _token, MyLendingMarket _market) {
+        token = _token;
+        market = _market;
     }
-    
-    /// @custom:invariant Total debt must never exceed total collateral value
-    function invariant_solvency() public {
-        assertTrue(_isSolvent(lending), "Protocol insolvent");
+
+    function _totalSupply() internal view override returns (uint256) {
+        return token.totalSupply();
     }
+
+    function _totalBalance() internal view override returns (uint256) {
+        return token.balanceOf(address(this)) + token.balanceOf(market);
+    }
+
+    // ...implement remaining hooks (typically 3–5 lines per template)
 }
 ```
 
-Run with:
-```bash
-forge invariant --match-contract MyLendingInvariants --depth 100
+Then in `foundry.toml`:
+
+```toml
+[invariant]
+runs = 1000
+depth = 50
+fail_on_revert = false
 ```
 
-When the fuzzer finds a counterexample, the framework outputs:
-1. **Call sequence** that broke the invariant
-2. **State diff** showing which variables changed
-3. **Trace** of internal calls
+Run:
+
+```bash
+forge test --match-contract MyProtocolInvariants -vvvv
+```
+
+If a counterexample is found, the trace is saved automatically.
 
 ---
 
-## 🔬 Architecture
+## 📚 Available Templates
 
-```
-defi-invariant-fuzzer/
-├── src/
-│   ├── base/
-│   │   └── BaseInvariant.sol       # Abstract invariant contract
-│   ├── handlers/
-│   │   ├── ERC20Handler.sol        # Random mint/transfer/burn
-│   │   ├── LendingHandler.sol      # Deposit/borrow/repay/liquidate
-│   │   ├── AMMHandler.sol          # Add/remove liquidity, swap
-│   │   └── OracleHandler.sol       # Push prices
-│   └── templates/
-│       ├── ERC20Conservation.sol
-│       ├── LendingSolvency.sol
-│       ├── AMMConstantProduct.sol
-│       └── ... (11 total)
-└── test/
-    └── (your test contracts)
-```
+| # | Template | Class | What it asserts |
+|---|---|---|---|
+| 01 | **ERC20Conservation** | Token | `totalSupply == sum(balanceOf)` |
+| 02 | **LendingSolvency** | Lending | `sum(deposits) >= sum(borrows) + reserves` |
+| 03 | **AMMConstantProduct** | AMM | `x * y >= k` (Uniswap V2 style) |
+| 04 | **LiquidationBounds** | Lending | `seized_collateral <= liquidatable_collateral` |
+| 05 | **VaultShareSolvency** | Vault | `idle + adapters >= total_assets` (ERC-4626) |
+| 06 | **OracleFreshness** | Oracle | `last_update <= staleness_threshold` |
+| 07 | **GovernanceQuorum** | Governance | `votes_for >= quorum && votes_against < quorum` |
+| 08 | **AccessControlMonotonicity** | Access | `role_assignments` only grow via `grantRole` |
+| 09 | **BridgeMessageUniqueness** | Bridge | `processed_messages` only grows |
+| 10 | **StakingRewardConservation** | Staking | `rewards_paid <= rewards_accrued` |
+| 11 | **ProxyImplementationMonotonicity** | Proxy | `implementation` only changes via `upgradeTo` |
+
+> **Need a new template?** Open an issue — most protocol-specific invariants are compositions of these 11.
+
+---
+
+## 🎓 When To Use This
+
+✅ **Use defi-invariant-fuzzer when:**
+- You're auditing a DeFi protocol and want to catch logic bugs static analysis misses
+- You have a fork-based Foundry project and want to fuzz behavior
+- You want to verify an audit fix actually works
+- You want a "did I break anything?" test suite for a refactor
+
+❌ **Don't use it when:**
+- The bug is in the EVM/solc layer (use [Echidna](https://github.com/crytic/echidna) or [Medusa](https://github.com/crytic/medusa) instead)
+- The bug is in off-chain logic (this is a Solidity tool)
+- You don't have a Foundry project yet (start with [solidity-forge-template](https://github.com/AbD02018/solidity-forge-template))
 
 ---
 
 ## 🤝 Contributing
 
-1. Add a new invariant template to `src/templates/`
-2. Write a unit test in `test/templates/<Name>.t.sol` proving the template catches synthetic bugs
-3. Submit PR with bug bounty finds that the template would have caught
+PRs welcome for:
+- New protocol-specific templates
+- More efficient fuzzer targets (call-sequence generators)
+- Better counterexample analysis (post-processing traces)
+- Documentation improvements
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution guide.
 
 ---
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE).
+
+---
+
+## 🙏 Acknowledgments
+
+- [Foundry](https://github.com/foundry-rs/foundry) — the engine
+- [Trail of Bits](https://github.com/crytic) — `Echidna`, `slither`, `manticore` — the inspiration
+- [Ethereum Foundation](https://ethereum.foundation/) — for funding the security tooling ecosystem
 
 ---
 
 <div align="center">
-
-*Invariant: A property that must hold for ALL possible inputs, not just the ones you tested.*
-
+  <sub>Built by <a href="https://github.com/AbD02018">@AbD02018</a> · Smart contract security researcher</sub>
 </div>
